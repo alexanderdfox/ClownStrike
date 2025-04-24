@@ -29,18 +29,48 @@ def update_flask_map(map_data):
 def index():
 	sorted_map = dict(sorted(flask_pheromone_map.items(), key=lambda item: item[1]["pheromone"], reverse=True))
 	html = '''
-	<h1>Pheromone Map</h1>
-	<table border="1" cellpadding="5">
-	<tr><th>File</th><th>Pheromone Level</th><th>Last Touched</th><th>Last Modified</th></tr>
-	{% for path, data in map.items() %}
-		<tr>
-			<td>{{ path }}</td>
-			<td>{{ "%.2f"|format(data.pheromone) }}</td>
-			<td>{{ data.last_touched }}</td>
-			<td>{{ data.mod_time }}</td>
-		</tr>
-	{% endfor %}
-	</table>
+	<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<title>Pheromone Map</title>
+		<script src="https://cdn.tailwindcss.com"></script>
+	</head>
+	<body class="bg-gray-100 text-gray-800">
+		<div class="max-w-6xl mx-auto p-8">
+			<h1 class="text-4xl font-bold mb-6 text-center">🐜 Pheromone Activity Map</h1>
+			<div class="overflow-x-auto bg-white shadow-lg rounded-lg">
+				<table class="min-w-full table-auto">
+					<thead>
+						<tr class="bg-gray-200 text-gray-700 uppercase text-sm leading-normal">
+							<th class="py-3 px-6 text-left">Pheromone Level</th>
+							<th class="py-3 px-6 text-left">Last Touched</th>
+							<th class="py-3 px-6 text-left">Last Modified</th>
+							<th class="py-3 px-6 text-left">File</th>
+						</tr>
+					</thead>
+					<tbody class="text-gray-600 text-sm font-light">
+					{% for path, data in map.items() %}
+						<tr class="border-b border-gray-200 hover:bg-gray-100">
+							<td class="py-3 px-6">
+								<div class="flex items-center">
+									<div class="w-full bg-gray-200 rounded-full h-4">
+										<div class="bg-green-500 h-4 rounded-full" style="width: {{ data.bar_width }}%;"></div>
+									</div>
+									<span class="ml-2">{{ "%.2f"|format(data.pheromone) }}</span>
+								</div>
+							</td>
+							<td class="py-3 px-6">{{ data.last_touched }}</td>
+							<td class="py-3 px-6">{{ data.mod_time }}</td>
+							<td class="py-3 px-6 whitespace-nowrap">{{ path }}</td>
+						</tr>
+					{% endfor %}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</body>
+	</html>
 	'''
 	return render_template_string(html, map=sorted_map)
 
@@ -85,6 +115,7 @@ class PheromoneMap:
 			return {
 				path: {
 					"pheromone": data["pheromone"],
+					"bar_width": min(100, data["pheromone"] * 10),
 					"last_touched": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(data["last_touched"])),
 					"mod_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(data["mod_time"])) if data["mod_time"] else "N/A"
 				}
