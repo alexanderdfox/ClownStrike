@@ -4,24 +4,20 @@ import threading
 import hashlib
 import shutil
 import requests
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
 from collections import defaultdict
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import yara
-from flask import Flask, jsonify, render_template_string
-import multiprocessing
+from flask import Flask, render_template_string
 
 # Configuration Constants
 PHEROMONE_INTENSITY = 1.0
 PHEROMONE_DECAY = 0.01
-SUSPICIOUS_EXTENSIONS = ['.sh', '.exe', '.plist', '.app', '.py']
-NUM_ANTS = 10
+NUM_ANTS = 1000
 VIRUSTOTAL_API_KEY = 'your_virustotal_api_key'  # Replace with your API key
 YARA_RULES_PATH = 'malware_rules.yar'
 
-# Flask UI
+# Flask UI setup
 app = Flask(__name__)
 flask_pheromone_map = defaultdict(float)
 
@@ -31,13 +27,18 @@ def update_flask_map(map_data):
 
 @app.route("/")
 def index():
-	sorted_map = dict(sorted(flask_pheromone_map.items(), key=lambda item: item[1], reverse=True))
+	sorted_map = dict(sorted(flask_pheromone_map.items(), key=lambda item: item[1]["pheromone"], reverse=True))
 	html = '''
 	<h1>Pheromone Map</h1>
 	<table border="1" cellpadding="5">
-	<tr><th>File</th><th>Pheromone Level</th></tr>
-	{% for path, level in map.items() %}
-		<tr><td>{{ path }}</td><td>{{ level }}</td></tr>
+	<tr><th>File</th><th>Pheromone Level</th><th>Last Touched</th><th>Last Modified</th></tr>
+	{% for path, data in map.items() %}
+		<tr>
+			<td>{{ path }}</td>
+			<td>{{ "%.2f"|format(data.pheromone) }}</td>
+			<td>{{ data.last_touched }}</td>
+			<td>{{ data.mod_time }}</td>
+		</tr>
 	{% endfor %}
 	</table>
 	'''
@@ -52,23 +53,43 @@ except:
 # Pheromone Map
 class PheromoneMap:
 	def __init__(self):
-		self.map = defaultdict(float)
+		self.map = defaultdict(lambda: {
+			"pheromone": 0.0,
+			"last_touched": 0.0,
+			"mod_time": 0.0
+		})
 		self.lock = threading.Lock()
 
 	def add_pheromone(self, file_path, intensity):
+		try:
+			mod_time = os.path.getmtime(file_path)
+		except Exception:
+			mod_time = 0.0
+
 		with self.lock:
-			self.map[file_path] += intensity
+			if self.map[file_path]["mod_time"] and self.map[file_path]["mod_time"] != mod_time:
+				print(f"⚠️ ALERT: Modification time changed for {file_path}")
+			self.map[file_path]["pheromone"] += intensity
+			self.map[file_path]["last_touched"] = time.time()
+			self.map[file_path]["mod_time"] = mod_time
 
 	def decay(self):
 		with self.lock:
 			for file_path in list(self.map.keys()):
-				self.map[file_path] -= PHEROMONE_DECAY
-				if self.map[file_path] <= 0:
+				self.map[file_path]["pheromone"] -= PHEROMONE_DECAY
+				if self.map[file_path]["pheromone"] <= 0:
 					del self.map[file_path]
 
 	def get_map(self):
 		with self.lock:
-			return dict(self.map)
+			return {
+				path: {
+					"pheromone": data["pheromone"],
+					"last_touched": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(data["last_touched"])),
+					"mod_time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(data["mod_time"])) if data["mod_time"] else "N/A"
+				}
+				for path, data in self.map.items()
+			}
 
 # Ant Agent
 class Ant(threading.Thread):
@@ -123,7 +144,7 @@ def quarantine(file_path):
 	except Exception as e:
 		print(f"⚠️ Failed to quarantine {file_path}: {e}")
 
-# File Monitor
+# File Monitor (monitors all file types)
 class FileMonitor(FileSystemEventHandler):
 	def __init__(self, ants, pheromone_map):
 		self.ants = ants
@@ -148,11 +169,11 @@ class FileMonitor(FileSystemEventHandler):
 			ant.leave_pheromone(file_path)
 
 	def on_modified(self, event):
-		if any(event.src_path.endswith(ext) for ext in SUSPICIOUS_EXTENSIONS):
+		if not event.is_directory:
 			self.handle_event(event.src_path)
 
 	def on_created(self, event):
-		if any(event.src_path.endswith(ext) for ext in SUSPICIOUS_EXTENSIONS):
+		if not event.is_directory:
 			self.handle_event(event.src_path)
 
 # Main with Flask Thread
@@ -167,7 +188,7 @@ def main():
 
 	observer = Observer()
 	event_handler = FileMonitor(ants, pheromone_map)
-	path = os.path.expanduser("/")
+	path = os.path.expanduser("/")  # Monitor root or customize it
 	observer.schedule(event_handler, path, recursive=True)
 	observer.start()
 
